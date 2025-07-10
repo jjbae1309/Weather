@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+	<head>
+		<meta charset="UTF-8">
+		<title>도시별 기온</title>
+		
+		<!-- ajax call을 위해 jQuery 사용 -->
+		<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>		
+		<!-- Highchart 사용 -->
+		<script src="https://code.highcharts.com/highcharts.js"></script>
+			
+		<script type="text/javascript">
+        const years = [2024, 2025];
+		
+        const dailyParams = [
+            'temperature_2m_mean',
+            'apparent_temperature_mean',
+            'precipitation_sum',
+            'relative_humidity_2m_mean'
+        ];
+
+        const displayNames = {
+            temperature_2m_mean: '평균기온 (℃)',
+            apparent_temperature_mean: '체감기온 (℃)',
+            precipitation_sum: '강수량 (mm)',
+            relative_humidity_2m_mean: '습도 (%)'
+        };
+		
+        const chartCategories = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+		
+		const currentYear = new Date().getFullYear();
+		const currentMonth = new Date().getMonth(); // 0 = 1월, 6 = 7월
+		
+		// 페이지 로딩 후
+		$(function () {
+			// 이벤트 정의
+			initEvent();
+		});
+		
+		// 이벤트 정의
+		function initEvent() {
+			// 조회 버튼을 눌렀을 시
+			$('#searchBtn').on('click', function () {
+				// 선택한 도시
+				const latLon = $('#citySelect').val();
+
+				if (!latLon || latLon.length === 0) {
+					alert("도시를 선택해주세요.");
+					return;
+				}
+				
+				const [lon, lat] = latLon.split(",");
+console.log('lon', lon, 'lat', lat);
+				drawCharts(lat, lon);
+			});
+		}
+		
+        function getTodayString() {
+            const now = new Date();
+            return now.toISOString().slice(0, 10); // YYYY-MM-DD
+        }
+
+        function getEndDateFor(year) {
+            const now = new Date();
+            return year < now.getFullYear()
+                ? `${year}-12-31`
+                : getTodayString();
+        }
+		
+        async function fetchYearData(year, lat, lon) {
+            const startDate = `${year}-01-01`;
+            const endDate = getEndDateFor(year);
+
+            const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=${dailyParams.join(',')}&timezone=Asia%2FSeoul`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+            return data.daily;
+        }
+
+        function calculateMonthlyAverages(dailyData) {
+            const monthly = Array.from({ length: 12 }, () => ({
+                days: 0,
+                temperature_2m_mean: 0,
+                apparent_temperature_mean: 0,
+                precipitation_sum: 0,
+                relative_humidity_2m_mean: 0
+            }));
+
+            dailyData.time.forEach((dateStr, i) => {
+                const monthIndex = new Date(dateStr).getMonth(); // 0~11
+                for (const key of dailyParams) {
+                    monthly[monthIndex][key] += dailyData[key][i];
+                }
+                monthly[monthIndex].days += 1;
+            });
+
+            return monthly.map((m) => {
+                const result = {};
+                for (const key of dailyParams) {
+                    result[key] = key === 'precipitation_sum'
+                        ? parseFloat(m[key].toFixed(1))  // 누적 합
+                        : parseFloat((m[key] / m.days).toFixed(1)); // 평균
+                }
+                return result;
+            });
+        }
+
+        async function drawCharts(lat, lon) {
+            const allData = {};
+
+            for (const year of years) {
+                const raw = await fetchYearData(year, lat, lon);
+                const processed = calculateMonthlyAverages(raw);
+                allData[year] = processed;
+            }
+
+            const root = document.getElementById('result');
+
+            for (const param of dailyParams) {
+                const containerId = `chart-${param}`;
+                const div = document.createElement('div');
+                div.id = containerId;
+                div.className = 'chart-container';
+                root.appendChild(div);
+
+                const series = years.map(year => {
+					let values = allData[year].map(month => month[param]);
+
+                    // 현재 연도일 경우, 오늘 기준으로 월 잘라내기
+                    if (year === new Date().getFullYear()) {
+                        const currentMonth = new Date().getMonth(); // 0~11
+                        values = values.slice(0, currentMonth + 1);
+                    }
+
+                    return {
+                        name: `${year}년`,
+                        data: values
+                    };
+                });
+
+                const visibleMonths = series[0].data.length;
+				
+                Highcharts.chart(containerId, {
+                    chart: { type: 'column' },
+                    title: { text: displayNames[param] },
+                    xAxis: { categories: chartCategories.slice(0, visibleMonths) },
+                    yAxis: {
+                        title: { text: displayNames[param] },
+                        allowDecimals: true
+                    },
+                    tooltip: {
+                        shared: true,
+                        valueSuffix: ''
+                    },
+                    series
+                });
+            }
+        }
+		</script>
+	</head>
+	
+	<body>
+		<h2>도시별 날씨 정보</h2>
+		<label for="citySelect">도시 선택:</label>
+		<select id="citySelect" style="width:100px">
+			<option value="126.9816417,37.57037778">서울</option>
+			<option value="-73.990494,40.7569545">뉴욕</option>
+			<option value="2.3522219,48.856614">파리</option>
+		</select>
+		
+		<button id="searchBtn">조회</button>
+
+		<div id="result"></div>		
+	</body>
+</html>
